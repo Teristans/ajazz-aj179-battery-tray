@@ -1,0 +1,53 @@
+name: 兼容性报告 / Compatibility report
+description: 报告其他型号是否可用（请务必填写型号与 PID）
+title: "[兼容性] <型号> —— <可用 / 部分可用 / 不可用>"
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！这个项目按 VID + 厂商接口特征匹配，所以其他型号可能直接可用。
+        PID 的获取方式：设备管理器 → 找到鼠标/接收器 → 属性 → 详细信息 → 硬件 ID。
+
+  - type: input
+    id: model
+    attributes:
+      label: 鼠标型号
+      placeholder: 例如 AJ179 APEX / AJ159 / AJ199
+    validations:
+      required: true
+
+  - type: input
+    id: pid
+    attributes:
+      label: 无线 / 有线两种状态下的 PID
+      placeholder: 例如 无线 0x5007、插线 0x4026
+    validations:
+      required: true
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: 结果
+      options:
+        - 电量与时钟都正常
+        - 电量正常，时钟无反应
+        - 时钟正常，电量读不到
+        - 完全不可用（枚举不到厂商集合）
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: `python aj179_tray.py --once` 的输出
+      description: 请贴完整 JSON，其中 raw 字段是原始帧，非常有助于判断
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Windows 版本与 Python 版本
+      placeholder: 例如 Windows 11 24H2 / Python 3.13.12

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本机运行时状态，不应进仓库
+config.json
+quit.flag
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+desktop.ini
+Thumbs.db
+.DS_Store
