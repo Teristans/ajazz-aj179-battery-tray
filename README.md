@@ -134,10 +134,37 @@ python aj179_battery.py             # 人类可读状态 + 原始帧
 
 ## 兼容性
 
-按 VID `0x3151` + 厂商接口特征匹配，所以**同方案的其他黑爵型号（AJ159 / AJ199 等）大概率可用**，但我只实测了 AJ179 APEX。
-其他品牌（罗技走 HID++ 私有协议）完全不是这套，用不了。
+按 VID `0x3151` + 厂商接口特征匹配。**注意：黑爵有两套完全不同的无线方案，「星闪版」不在这套里。**
 
-如果你在别的型号上跑通了，欢迎提 issue 报一下型号和 PID。
+| 型号 | 无线方案 | 结果 |
+|---|---|---|
+| AJ179 APEX（2.4G 版） | SONiX `0x3151` | ✅ 实测可用（本项目开发机型） |
+| AJ159 APEX（2.4G 版） | SONiX `0x3151` | ⚠️ 同方案，未实测，大概率可用 |
+| **AJ159 NL / 星闪版** | NearLink BS20 `0x7768` | ❌ **不支持**，见下 |
+
+星闪版（AJ159 NL / NLP）是另一套芯片与协议：VID `0x7768`（接收器 `7768:6425`、有线 `7768:6D25`），
+厂商集合在 usage page `0xFFB1 / 0xFFB2 / 0xFFB3`，report id `6`，**电量由设备主动推送**而不是查询：
+
+```text
+06 fa 03 00 00 03 64 01
+|  |  |        |  |
+|  |  |        |  +-- 充电标志（1 = 接 USB 供电）
+|  |  |        +----- 百分比 0x64 = 100%
+|  |  +-------------- tag 0x03 = 电量
++--+----------------- 5 字节头
+```
+
+要读它得新增一个适配层（监听 input report + 不同的设备发现条件），当前版本没有。
+
+**不确定自己的型号？** 直接跑诊断，它只读不写：
+
+```bash
+python tools/probe_hid.py          # 人类可读
+python tools/probe_hid.py --json   # 贴到 issue 用
+```
+
+它会列出全部 HID 设备、厂商私有集合、以及疑似电量字段（自动标出百分比），并给出「能不能用」的结论。
+其他品牌（罗技走 HID++ 私有协议）完全不适用。
 
 ## 自测
 
@@ -160,6 +187,7 @@ python -m unittest discover -s tests -v
 - [Aiacos/ajazz-control-center](https://github.com/Aiacos/ajazz-control-center) —— 黑爵 AJ 系列协议文档
 - [reicheltp/ajazz-macos-mousetime-sync](https://github.com/reicheltp/ajazz-macos-mousetime-sync) —— 底座时钟帧格式
 - [xrfc/gpw-battery-tray](https://github.com/xrfc/gpw-battery-tray) —— 本项目的灵感来源
+- [alfaisaldev/AJ159-NL-P-web-based-driver-micetil](https://github.com/alfaisaldev/AJ159-NL-P-web-based-driver-micetil) —— 星闪版（AJ159 NL）协议，上面兼容性表的数据来源
 
 ## License
 

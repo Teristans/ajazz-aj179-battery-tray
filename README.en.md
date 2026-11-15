@@ -129,10 +129,38 @@ This part came from plug/unplug testing; the public reverse-engineering docs do 
 
 ## Compatibility
 
-Matching is by VID `0x3151` plus the vendor interface signature, so **other AJAZZ models on the same platform (AJ159, AJ199, ...) will likely work** — only the AJ179 APEX has been tested.
-Other brands do not apply at all (Logitech uses its own HID++ protocol).
+Matching is by VID `0x3151` plus the vendor interface signature. **Heads up: AJAZZ ships two unrelated wireless platforms — the "NearLink / 星闪" models are not covered.**
 
-If it works on your model, please open an issue with the model name and PID.
+| Model | Wireless platform | Status |
+|---|---|---|
+| AJ179 APEX (2.4G) | SONiX `0x3151` | ✅ Confirmed working (dev device) |
+| AJ159 APEX (2.4G) | SONiX `0x3151` | ⚠️ Same platform, untested |
+| **AJ159 NL / NearLink** | NearLink BS20 `0x7768` | ❌ **Not supported** |
+
+The NearLink variant is a different chipset and protocol: VID `0x7768` (`7768:6425` receiver, `7768:6D25` wired),
+vendor collections on usage pages `0xFFB1 / 0xFFB2 / 0xFFB3`, report id `6`, and the **battery level is pushed by
+the device** instead of being queried:
+
+```text
+06 fa 03 00 00 03 64 01
+|  |  |        |  |
+|  |  |        |  +-- charging flag (1 = on USB power)
+|  |  |        +----- percentage 0x64 = 100%
+|  |  +-------------- tag 0x03 = battery level
++--+----------------- 5-byte header
+```
+
+Supporting it needs a new adapter (input-report listener plus different discovery rules); this version does not have one.
+
+**Not sure which one you have?** Run the read-only probe:
+
+```bash
+python tools/probe_hid.py          # human readable
+python tools/probe_hid.py --json   # paste into an issue
+```
+
+It enumerates every HID device, the vendor collections, and any battery-looking field (percentage highlighted),
+then tells you whether this project can drive it. Other brands (Logitech uses HID++) are not applicable at all.
 
 ## Tests
 
@@ -155,6 +183,7 @@ Protocol details come from these public reverse-engineering efforts:
 - [Aiacos/ajazz-control-center](https://github.com/Aiacos/ajazz-control-center) — AJAZZ AJ-series protocol docs
 - [reicheltp/ajazz-macos-mousetime-sync](https://github.com/reicheltp/ajazz-macos-mousetime-sync) — dock clock frame layout
 - [xrfc/gpw-battery-tray](https://github.com/xrfc/gpw-battery-tray) — the project that inspired this one
+- [alfaisaldev/AJ159-NL-P-web-based-driver-micetil](https://github.com/alfaisaldev/AJ159-NL-P-web-based-driver-micetil) — NearLink (AJ159 NL) protocol, source of the compatibility table above
 
 ## License
 
