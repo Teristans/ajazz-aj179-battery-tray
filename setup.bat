@@ -10,6 +10,10 @@ call ".venv\Scripts\python.exe" -m pip install --upgrade pip
 call ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto failed
 
+rem pip and Pillow's AVIF/WebP/CMS codecs are never imported by this project.
+rem Removing them takes .venv from ~28 MB down to ~7 MB.
+call ".venv\Scripts\python.exe" tools\slim_venv.py
+
 echo.
 echo Done. Double-click start.bat to run.
 pause

@@ -27,7 +27,7 @@ Talks to the HID device directly — no vendor driver, no network, no changes to
 Windows + Python 3.9 or newer ([download](https://www.python.org/downloads/windows/), tick *Add Python to PATH*).
 
 ```text
-1. Double-click setup.bat    # creates .venv, installs deps (once)
+1. Double-click setup.bat    # creates .venv, installs deps (once, then trims it)
 2. Double-click start.bat    # percentage appears in the tray
 ```
 
@@ -169,6 +169,31 @@ Frame parsing is pure functions — no hardware needed:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+## Footprint
+
+A freshly installed `.venv` is about 28 MB, but only ~7 MB is ever imported:
+
+| What | Size | Why it goes |
+|---|---|---|
+| `pip` | 13 MB | used once to install, never again |
+| Pillow AVIF decoder | 7.5 MB | we draw a 32x32 flat-colour bitmap |
+| Pillow WebP / LittleCMS | 0.7 MB | same, unused |
+| hidapi + pystray + Pillow core | 6.5 MB | **the part that matters** |
+
+`setup.bat` calls `tools/slim_venv.py` automatically and leaves the venv at ~7 MB.
+For an environment that is already set up, run `slim.bat`; to see the savings first,
+run `python tools/slim_venv.py --check`.
+
+Everything removed is restorable:
+
+```bash
+.venv\Scripts\python.exe -m ensurepip                              # pip back
+.venv\Scripts\python.exe -m pip install --force-reinstall pillow   # full Pillow back
+```
+
+> Running the app afterwards regenerates a few hundred KB of `__pycache__`.
+> That is normal bytecode caching, not the bloat coming back.
 
 ## Limitations
 

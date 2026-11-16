@@ -26,7 +26,7 @@
 需要 Windows + Python 3.9 或更新（[下载](https://www.python.org/downloads/windows/)，安装时勾选 *Add Python to PATH*）。
 
 ```text
-1. 双击 setup.bat     # 建 .venv 并装依赖，只需一次
+1. 双击 setup.bat     # 建 .venv 并装依赖，只需一次（装完自动精简体积）
 2. 双击 start.bat     # 托盘区出现数字电量
 ```
 
@@ -173,6 +173,29 @@ python tools/probe_hid.py --json   # 贴到 issue 用
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+## 体积
+
+装完依赖的 `.venv` 约 28 MB，但程序真正用到的只有约 7 MB：
+
+| 内容 | 体积 | 说明 |
+|---|---|---|
+| `pip` | 13 MB | 只在装依赖时用一次，装完就用不上了 |
+| Pillow AVIF 解码器 | 7.5 MB | 只是为了画一个 32×32 的纯色数字图标 |
+| Pillow WebP / LittleCMS | 0.7 MB | 同上，用不到 |
+| hidapi + pystray + Pillow 核心 | 6.5 MB | **真正必需** |
+
+`setup.bat` 装完会自动调用 `tools/slim_venv.py` 清掉前几项，落到约 7 MB。
+已经装好的环境想单独瘦一次，双击 `slim.bat`；想先看能省多少，跑 `python tools/slim_venv.py --check`。
+
+删掉的东西都能装回来：
+
+```bash
+.venv\Scripts\python.exe -m ensurepip                              # 恢复 pip
+.venv\Scripts\python.exe -m pip install --force-reinstall pillow   # 恢复完整 Pillow
+```
+
+> 精简后正常运行会重新生成少量 `__pycache__`（几百 KB），这是 Python 的字节码缓存，属预期行为。
 
 ## 已知限制
 
