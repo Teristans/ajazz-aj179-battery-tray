@@ -2,6 +2,9 @@
 
 [English](README.en.md) · 简体中文
 
+> **用 AJ159 星闪版？** 那个型号走 NearLink（接收器 `7768:6425`），本仓库不支持，
+> 请移步 [ajazz-aj159-nealink-battery](https://github.com/Teristans/ajazz-aj159-nealink-battery)。
+
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d4)](https://github.com/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)

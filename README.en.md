@@ -2,6 +2,10 @@
 
 English · [简体中文](README.md)
 
+> **Using an AJ159 NearLink mouse?** It uses a different protocol (receiver `7768:6425`)
+> and is not supported here. See
+> [ajazz-aj159-nealink-battery](https://github.com/Teristans/ajazz-aj159-nealink-battery).
+
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d4)](https://github.com/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776ab)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
