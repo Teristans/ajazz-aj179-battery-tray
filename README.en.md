@@ -20,11 +20,24 @@ Talks to the HID device directly — no vendor driver, no network, no changes to
 ## Features
 
 - Tray icon shows the **battery percentage**: green (>50%) / orange (21–50%) / red (≤20%), blue while charging
+- **Time used since the last charge**, shown in the menu and the hover tooltip
 - Hover for percentage and last-updated time; left click to refresh (auto every 60 s)
 - One Windows notification when battery drops to ≤20%
 - **Dock OLED clock**: pushes the system time to the charging dock every 30 s while running
 - Optional run-at-login (`HKCU\...\Run`, no shortcut files left behind)
 - Single instance; `--once` prints JSON so you can wire it into your own scripts
+
+## Usage time since last charge
+
+Only counts periods when the app is running **and** the receiver reports a live wireless link:
+
+- charging, mouse asleep, receiver unplugged — none of these count
+- shutdown or PC suspend — not counted (a sample gap over 3 minutes is discarded as stale)
+- percentage rising by ≥4 points since the last reading — treated as "it was charged", counter resets
+
+The counter lives in `usage.json` and survives restarts. It resets on a `charging → wireless` transition, or on a percentage jump.
+
+> This is *accumulated on-time*, not *elapsed time since the last charge*. After three days powered off it still shows the handful of hours from before, because the mouse was not drawing power during that gap.
 
 ## Quick start
 
@@ -51,7 +64,8 @@ Right-click the tray icon:
 | Menu | Action |
 |---|---|
 | Refresh now | Read once (same as left click) |
-| Details | State, product name, timestamp, raw HID frame as hex |
+| Since last charge: X | Accumulated on-time, read-only |
+| Details | State, product name, usage time, timestamp, raw HID frame as hex |
 | Dock clock | Toggle clock sync (persisted in `config.json`) |
 | Sync clock now | Force one clock update |
 | Run at login | Registry autostart toggle |
@@ -62,11 +76,13 @@ Re-toggle "Run at login" after moving the folder.
 ## CLI
 
 ```bash
-python aj179_tray.py --once         # one-shot JSON (includes clock_synced)
+python aj179_tray.py --once         # one-shot JSON (includes clock_synced / usage)
 python aj179_tray.py --sync-clock   # push the clock once
 python aj179_tray.py --quit         # graceful exit of a running instance
 python aj179_battery.py             # human-readable state + raw frame
 ```
+
+`--once` reads `usage.json` without touching the counter.
 
 ## Protocol
 
@@ -203,6 +219,8 @@ Everything removed is restorable:
 
 - When the mouse is deeply asleep the receiver returns nothing; the tray shows `--` and keeps the last reading until the next refresh.
 - While the mouse is plugged in and charging, the dock's HID interface disappears from the system, so clock sync pauses; it resumes automatically within 30 s after unplugging (and immediately when the state flips back to wireless).
+- At `100` the three digits have to fit a 32 px canvas, so the font drops to 18 and looks smaller than a two-digit value; 1–2 digits fill the canvas.
+- Usage time only accumulates while the app is running.
 - Windows only (tray, registry autostart and the `ctypes` message box are Win32).
 
 ## Credits

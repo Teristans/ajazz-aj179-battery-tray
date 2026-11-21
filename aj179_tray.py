@@ -21,15 +21,20 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import aj179_battery as core
+import usage
 
 APP_NAME = "AJ179 电量"
 REFRESH_SECONDS = 60
 CLOCK_SYNC_SECONDS = 30  # 底座会在几分钟内把时钟重置回 00:00，必须定时重发
 SCRIPT = Path(__file__).resolve()
 CONFIG_FILE = SCRIPT.parent / "config.json"
+USAGE_FILE = SCRIPT.parent / "usage.json"
 QUIT_FLAG = SCRIPT.parent / "quit.flag"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "AJ179BatteryTray"
+
+ICON_SIZE = 32
+ICON_MARGIN = 1  # 留 1px 防边缘抗锯齿被裁
 
 DIGIT_FONTS = [r"C:\Windows\Fonts\arialbd.ttf", r"C:\Windows\Fonts\seguisb.ttf"]
 CJK_FONTS = [r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\msyh.ttc"]
@@ -51,6 +56,30 @@ def _font(candidates: list[str], size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+def _fit_font(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    candidates: list[str],
+    start: int = 34,
+    minimum: int = 8,
+) -> ImageFont.FreeTypeFont:
+    """挑一个能把 text 完整塞进画布的最大字号。
+
+    以前字号是写死的 20，两位数在 32px 画布上只占约 22px 宽，Windows 再缩到
+    16px 显示就更容易糊；三位数（100%）还会溢出。按实测尺寸选字号可以同时
+    解决“太小”和“溢出”两个问题。
+    """
+    box = ICON_SIZE - 2 * ICON_MARGIN
+    fallback = _font(candidates, minimum)
+    for size in range(start, minimum - 1, -1):
+        font = _font(candidates, size)
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        if right - left <= box and bottom - top <= box:
+            return font
+        fallback = font
+    return fallback
+
+
 def _level_color(percent: int) -> tuple[int, int, int]:
     if percent <= 20:
         return COLOR_LOW
@@ -60,22 +89,20 @@ def _level_color(percent: int) -> tuple[int, int, int]:
 
 
 def make_icon(percent: int | None, charging: bool = False) -> Image.Image:
-    size = 32
+    size = ICON_SIZE
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     if charging and percent is not None:
-        text, color = str(percent), COLOR_CHARGE
-        font = _font(DIGIT_FONTS, 19 if percent >= 100 else 20)
+        text, color, fonts = str(percent), COLOR_CHARGE, DIGIT_FONTS
     elif charging:
-        text, color, font = "充", COLOR_CHARGE, _font(CJK_FONTS, 22)
+        text, color, fonts = "充", COLOR_CHARGE, CJK_FONTS
     elif percent is None:
-        text, color, font = "--", COLOR_UNKNOWN, _font(DIGIT_FONTS, 15)
+        text, color, fonts = "--", COLOR_UNKNOWN, DIGIT_FONTS
     else:
-        text = str(percent)
-        color = _level_color(percent)
-        font = _font(DIGIT_FONTS, 19 if percent >= 100 else 20)
+        text, color, fonts = str(percent), _level_color(percent), DIGIT_FONTS
 
+    font = _fit_font(draw, text, fonts)
     left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
     draw.text(
         ((size - (right - left)) / 2 - left, (size - (bottom - top)) / 2 - top),
@@ -87,7 +114,10 @@ def make_icon(percent: int | None, charging: bool = False) -> Image.Image:
 
 
 def _detail_text(
-    status: core.Status, last: core.Status | None, clock_line: str | None = None
+    status: core.Status,
+    last: core.Status | None,
+    clock_line: str | None = None,
+    usage_line: str | None = None,
 ) -> str:
     if status.state == core.STATE_WIRELESS:
         head = f"电量：{status.percent}%（放电中）"
@@ -106,6 +136,8 @@ def _detail_text(
     if status.product:
         lines.append(f"设备：{status.product}")
     lines.append(f"更新时间：{status.updated_at}")
+    if usage_line:
+        lines.append(usage_line)
     if clock_line:
         lines.append(clock_line)
     if status.raw:
@@ -179,6 +211,7 @@ class Tray:
         self._stop = threading.Event()
 
         self.config = load_config()
+        self.tracker = usage.Tracker(USAGE_FILE)
         self._clock_ok = False
         self._clock_at: float | None = None
 
@@ -188,6 +221,9 @@ class Tray:
             APP_NAME,
             menu=pystray.Menu(
                 pystray.MenuItem("立即刷新", self.refresh, default=True),
+                pystray.MenuItem(
+                    lambda item: self.tracker.menu_text(), None, enabled=False
+                ),
                 pystray.MenuItem("电量详情", self.show_detail),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
@@ -214,6 +250,9 @@ class Tray:
         previous_state = self.current.state if self.current else None
         self.current = status
 
+        # 累计使用时长：只统计无线在线时段，充电 / 休眠 / 掉线都不计
+        self.tracker.on_sample(status.state, status.percent)
+
         # 接收器刚回到在线（例如拔掉充电线）时立刻补一次对时，不等 30 秒定时器
         if status.state == core.STATE_WIRELESS and previous_state not in (None, core.STATE_WIRELESS):
             threading.Thread(target=self._sync_clock, daemon=True).start()
@@ -233,7 +272,11 @@ class Tray:
 
     def _apply(self, status: core.Status) -> None:
         if status.state == core.STATE_WIRELESS:
-            tooltip = f"{APP_NAME}\n电量 {status.percent}%\n更新于 {status.updated_at}"
+            tooltip = (
+                f"{APP_NAME}\n电量 {status.percent}%"
+                f"\n自上次充电：{self.tracker.text()}"
+                f"\n更新于 {status.updated_at}"
+            )
         elif status.state == core.STATE_CHARGING:
             if status.percent is not None:
                 tooltip = f"{APP_NAME}\n充电中 · 电量 {status.percent}%\n更新于 {status.updated_at}"
@@ -256,7 +299,10 @@ class Tray:
 
     def show_detail(self, icon=None, item=None) -> None:
         text = _detail_text(
-            self.current or core.Status(core.STATE_ABSENT), self.last, self._clock_line()
+            self.current or core.Status(core.STATE_ABSENT),
+            self.last,
+            self._clock_line(),
+            self.tracker.detail_text(),
         )
         threading.Thread(target=show_message, args=(APP_NAME, text), daemon=True).start()
 
@@ -304,6 +350,7 @@ class Tray:
 
     def quit(self, icon=None, item=None) -> None:
         self._stop.set()
+        self.tracker.save()  # 把未落盘的累计时长写回
         self.icon.stop()
 
     # ---------- 生命周期 ----------
@@ -370,6 +417,7 @@ def main() -> int:
     if "--once" in sys.argv:
         status = core.read_status()
         clock_ok = core.set_dock_clock()
+        track = usage.Tracker(USAGE_FILE)  # 只读，不改变累计状态
         print(
             json.dumps(
                 {
@@ -380,6 +428,7 @@ def main() -> int:
                     "charging": status.charging,
                     "updated_at": status.updated_at,
                     "clock_synced": clock_ok,
+                    "usage": track.as_dict(),
                     "raw": status.raw.hex(" ") if status.raw else None,
                 },
                 ensure_ascii=False,
