@@ -37,6 +37,12 @@ Only counts periods when the app is running **and** the receiver reports a live 
 
 The counter lives in `usage.json` and survives restarts. It resets on a `charging → wireless` transition, or on a percentage jump.
 
+The "last charge finished" timestamp is only shown when the app **literally witnessed the unplug**. It never invents one:
+
+- first run — that is just the start of counting, not a charge
+- app started after the charge was already done — the unplug moment was missed
+- charge inferred from a percentage rebound — shown as "~ HH:MM (inferred)"
+
 > This is *accumulated on-time*, not *elapsed time since the last charge*. After three days powered off it still shows the handful of hours from before, because the mouse was not drawing power during that gap.
 
 ## Quick start

@@ -5,15 +5,26 @@ a sleeping machine, or a charging session never inflates the figure.  Sampling
 gaps longer than MAX_GAP_SECONDS are discarded (the app was not running, or the
 PC was suspended), which is why a shutdown does not add hours.
 
-Two things reset the counter:
+Two timestamps are kept, deliberately separate:
 
-  1. the link coming back after a charging session (charging -> wireless)
-  2. the reported percentage jumping up by RESET_JUMP points, which catches a
-     charge that happened while this app was not running
+  ``since``       the start of the current counting cycle.  Always present once
+                  counting begins, but it says nothing about when charging
+                  finished — on a cold start it is simply "now".
 
-State is a tiny JSON file next to the script.  It is written on reset and at
-most once per SAVE_INTERVAL_SECONDS, not on every sample, to avoid pointless
-disk churn.
+  ``charge_end``  the completion of the last charge, and only recorded when the
+                  app actually witnessed one.  ``charge_end_exact`` tells
+                  whether it was observed (charging -> wireless) or inferred
+                  from a percentage rebound, because an inferred stamp is only
+                  accurate to "sometime before this sample".
+
+Three things start a new cycle: the very first wireless sample (baseline), the
+link coming back after a charge (charging -> wireless), and a percentage jump of
+RESET_JUMP points or more while the mouse is wireless (a charge that happened
+while the app was not running).
+
+State is a tiny JSON file next to the script.  It is written on reset and at most
+once per SAVE_INTERVAL_SECONDS, not on every sample, to avoid pointless disk
+churn.
 """
 
 from __future__ import annotations
@@ -30,6 +41,11 @@ ABSENT = "absent"
 RESET_JUMP = 4  # a rise of this many points means it was charged meanwhile
 MAX_GAP_SECONDS = 180.0  # longer sample gap -> stale, do not credit the time
 SAVE_INTERVAL_SECONDS = 300.0
+
+# 重置原因
+BASELINE = "baseline"  # 首次运行，只为建立基线
+UNPLUG = "unplug"  # 亲眼看到 charging -> wireless
+JUMP = "jump"  # 无线状态下电量回升，只能推断
 
 
 def human_duration(seconds: float) -> str:
@@ -57,7 +73,9 @@ class Tracker:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.seconds: float = 0.0
+        self.since: float | None = None
         self.charge_end: float | None = None
+        self.charge_end_exact: bool = False
         self._anchor: float | None = None
         self._last_percent: int | None = None
         self._last_state: str | None = None
@@ -76,8 +94,20 @@ class Tracker:
             return
         try:
             self.seconds = float(data.get("seconds") or 0.0)
-            self.charge_end = data.get("charge_end") or None
-            self._anchor = data.get("anchor") or None
+            since = data.get("since")
+            charge_end = data.get("charge_end")
+            if since is None and charge_end is not None:
+                # 旧格式只有一个 charge_end，且它可能是“首次运行基线”，
+                # 无法分辨，只能降级成计时起点，不再声称是充电完成时刻。
+                since = charge_end
+                charge_end = None
+            self.since = float(since) if since is not None else None
+            self.charge_end = float(charge_end) if charge_end is not None else None
+            self.charge_end_exact = bool(data.get("charge_end_exact")) and (
+                self.charge_end is not None
+            )
+            anchor = data.get("anchor")
+            self._anchor = float(anchor) if anchor is not None else None
             percent = data.get("last_percent")
             self._last_percent = int(percent) if percent is not None else None
             self._last_state = data.get("last_state")
@@ -89,7 +119,9 @@ class Tracker:
         now = time.time() if now is None else now
         payload = {
             "seconds": round(self.seconds, 1),
+            "since": self.since,
             "charge_end": self.charge_end,
+            "charge_end_exact": self.charge_end_exact,
             "anchor": self._anchor,
             "last_percent": self._last_percent,
             "last_state": self._last_state,
@@ -106,12 +138,24 @@ class Tracker:
     # ---------- 采样 ----------
 
     def on_sample(self, state: str, percent: int | None, now: float | None = None) -> bool:
-        """Feed one reading. Returns True when the counter was reset."""
+        """Feed one reading. Returns True when a new cycle started."""
         now = time.time() if now is None else now
-        reset = self._detect_reset(state, percent)
-        if reset:
+        reason = self._detect_reset(state, percent)
+        if reason is not None:
             self.seconds = 0.0
-            self.charge_end = now
+            self.since = now
+            if reason == UNPLUG and not self._blind_gap(now):
+                # 完整看到“拔线 → 回到无线”，这个时间就是充电结束
+                self.charge_end = now
+                self.charge_end_exact = True
+            elif reason == JUMP:
+                # 电量回升只能说明“上次采样之后某个时刻充完了”
+                self.charge_end = now
+                self.charge_end_exact = False
+            else:
+                # 基线 / 盲区里的拔线：只知道从此开始计时，充电何时结束不可知
+                self.charge_end = None
+                self.charge_end_exact = False
 
         # 只在“无线在线”的连续两帧之间累计，充电 / 休眠 / 掉线都不算使用
         elif state == WIRELESS and self._last_state == WIRELESS and self._anchor is not None:
@@ -124,28 +168,37 @@ class Tracker:
             self._last_percent = percent
         self._last_state = state
 
-        if reset or (now - self._saved_at) >= SAVE_INTERVAL_SECONDS:
+        if reason is not None or (now - self._saved_at) >= SAVE_INTERVAL_SECONDS:
             self.save(now)
-        return reset
+        return reason is not None
 
-    def _detect_reset(self, state: str, percent: int | None) -> bool:
+    def _blind_gap(self, now: float) -> bool:
+        """上一帧离现在太久 -> 期间发生的事都是猜的。"""
+        return self._anchor is None or (now - self._anchor) > MAX_GAP_SECONDS
+
+    def _detect_reset(self, state: str, percent: int | None) -> str | None:
         # 首次运行：无线在线就以此为基线，否则菜单永远停在“尚未记录”
-        if self.charge_end is None and state == WIRELESS:
-            return True
+        if self.since is None and state == WIRELESS:
+            return BASELINE
         # 正常路径：充完电拔线，链路回到无线
         if self._last_state == CHARGING and state == WIRELESS:
-            return True
-        # 兜底：本程序没运行时充过电，只能靠电量跳升反推
-        if percent is not None and self._last_percent is not None:
-            if percent >= self._last_percent + RESET_JUMP:
-                return True
-        return False
+            return UNPLUG
+        # 兜底：本程序没运行时充过电，只能靠电量跳升反推。
+        # 充电中不参与，否则边充边涨会被判成一次“充满”。
+        if (
+            state == WIRELESS
+            and percent is not None
+            and self._last_percent is not None
+            and percent >= self._last_percent + RESET_JUMP
+        ):
+            return JUMP
+        return None
 
     # ---------- 展示 ----------
 
     @property
     def has_data(self) -> bool:
-        return self.charge_end is not None
+        return self.since is not None
 
     def text(self) -> str:
         if not self.has_data:
@@ -158,18 +211,28 @@ class Tracker:
     def detail_text(self) -> str:
         if not self.has_data:
             return "自上次充电：尚未记录（从本次运行开始计时）"
-        return (
-            f"自上次充电：{human_duration(self.seconds)}"
-            f"\n上次充电完成：{_stamp(self.charge_end)}"
-        )
+        lines = [f"自上次充电：{human_duration(self.seconds)}"]
+        if self.charge_end is not None and self.charge_end_exact:
+            lines.append(f"上次充电完成：{_stamp(self.charge_end)}")
+        elif self.charge_end is not None:
+            lines.append(f"上次充电完成：约 {_stamp(self.charge_end)}（据电量回升推断）")
+        else:
+            lines.append(f"计时起点：{_stamp(self.since)}（未观察到充电过程）")
+        return "\n".join(lines)
 
     def as_dict(self) -> dict:
         return {
             "seconds": round(self.seconds, 1),
             "text": self.text(),
+            "since": (
+                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.since))
+                if self.since
+                else None
+            ),
             "charge_end": (
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.charge_end))
                 if self.charge_end
                 else None
             ),
+            "charge_end_exact": self.charge_end_exact,
         }
